@@ -1,5 +1,13 @@
 # 🐍 Laya Neural Snake (神经决策贪吃蛇)
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Model-Laya_(ModernBERT--421M)-00F5D4?style=flat-square&logo=huggingface" alt="Laya Model" />
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/FastAPI-Framework-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Acceleration-Apple_MPS_/_CUDA-FF6F00?style=flat-square" alt="Hardware Acceleration" />
+  <img src="https://img.shields.io/badge/Decision-Non--autoregressive-9C27B0?style=flat-square" alt="Decision Type" />
+</p>
+
 基于开源非自回归决策大模型 **[Laya](https://github.com/NandhaKishorM/laya)** (`convaiinnovations/laya`) 构建的实时空间感知与自动驾驶贪吃蛇游戏。
 
 不同于传统生成式 LLM 缓慢的逐字采样与幻觉问题，Laya 采用 **ModernBERT-large (421M)** 编码器底座与专门的决策原语（`choice`），单步前向推演即可输出高标定性、鲁棒的动作概率分布。

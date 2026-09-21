@@ -30,25 +30,40 @@ t_start = time.time()
 agent = laya.load("convaiinnovations/laya", device=device)
 print(f"[*] Laya Model ready in {time.time() - t_start:.2f}s!")
 
-def bfs_shortest_path(start, target, obstacles, w, h):
-    """BFS to find the shortest obstacle-avoiding path length between start and target."""
+def bfs_path(start, target, obstacles, w, h):
+    """BFS to find the shortest obstacle-avoiding coordinate path between start and target."""
     if start == target:
-        return 0
+        return [start]
     if start in obstacles or not (0 <= start[0] < w and 0 <= start[1] < h):
         return None
-    visited = {start}
-    q = deque([(start[0], start[1], 0)])
+    parent = {start: None}
+    q = deque([start])
+    found = False
     while q:
-        cx, cy, dist = q.popleft()
+        curr = q.popleft()
+        if curr == target:
+            found = True
+            break
         for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
-            nx, ny = cx + dx, cy + dy
-            if nx == target[0] and ny == target[1]:
-                return dist + 1
-            if 0 <= nx < w and 0 <= ny < h:
-                if (nx, ny) not in obstacles and (nx, ny) not in visited:
-                    visited.add((nx, ny))
-                    q.append((nx, ny, dist + 1))
-    return None
+            nx, ny = curr[0] + dx, curr[1] + dy
+            nxt = (nx, ny)
+            if 0 <= nx < w and 0 <= ny < h and nxt not in obstacles and nxt not in parent:
+                parent[nxt] = curr
+                q.append(nxt)
+    if not found:
+        return None
+    curr = target
+    path = []
+    while curr is not None:
+        path.append(curr)
+        curr = parent[curr]
+    path.reverse()
+    return path
+
+def bfs_shortest_path(start, target, obstacles, w, h):
+    """BFS to find the shortest obstacle-avoiding path length between start and target."""
+    p = bfs_path(start, target, obstacles, w, h)
+    return len(p) - 1 if p else None
 
 def get_flood_fill_space(start_cell, obstacles, w, h, max_depth=None):
     """BFS to count reachable free cells from start_cell."""
@@ -70,14 +85,41 @@ def get_flood_fill_space(start_cell, obstacles, w, h, max_depth=None):
                     q.append((nx, ny))
     return count
 
-def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], grid_size: List[int], cur_dir: str):
+def simulate_path_safety(head, food, body, w, h):
+    """Virtual snake simulation: checks if shortest path to food allows safe escape to tail upon eating."""
+    body_set = set(map(tuple, body))
+    path = bfs_path(tuple(head), tuple(food), body_set, w, h)
+    if not path or len(path) < 2:
+        return None, False
+    
+    snake = [tuple(head)] + [tuple(b) for b in body]
+    for step in path[1:]:
+        snake = [step] + snake[:-1]
+    
+    virtual_head = snake[0]
+    virtual_tail = snake[-1]
+    virtual_obstacles = set(snake[1:-1])
+    tail_path = bfs_shortest_path(virtual_head, virtual_tail, virtual_obstacles, w, h)
+    return path, (tail_path is not None)
+
+def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], grid_size: List[int], cur_dir: str, steps_since_food: int = 0, recent_heads: list = None):
     w, h = grid_size
     moves = {"UP": (0, -1), "DOWN": (0, 1), "LEFT": (-1, 0), "RIGHT": (1, 0)}
     opposite = {"UP": "DOWN", "DOWN": "UP", "LEFT": "RIGHT", "RIGHT": "LEFT"}
     body_set = set(map(tuple, body))
     tail = tuple(body[-1]) if body else tuple(head)
+    recent_set = set(recent_heads) if recent_heads else set()
 
-    cur_manhattan = abs(head[0] - food[0]) + abs(head[1] - food[1])
+    # Pre-simulate shortest food path safety
+    food_path, is_food_safe = simulate_path_safety(head, food, body, w, h)
+    verified_food_dir = None
+    if food_path and is_food_safe and len(food_path) >= 2:
+        dx, dy = food_path[1][0] - head[0], food_path[1][1] - head[1]
+        for d, (mdx, mdy) in moves.items():
+            if (dx, dy) == (mdx, mdy):
+                verified_food_dir = d
+                break
+
     cur_bfs_food = bfs_shortest_path(tuple(head), tuple(food), body_set, w, h)
 
     criteria = {}
@@ -89,7 +131,6 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
     forbidden_reverse = opposite.get(cur_dir) if len(body) >= 1 else None
 
     for d, (dx, dy) in moves.items():
-        # Completely exclude the reverse direction from decision space
         if d == forbidden_reverse:
             analysis[d] = {"safe": False, "reason": "Physically Forbidden (Reverse)"}
             continue
@@ -109,26 +150,20 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
             
             # Virtual next step obstacle simulation for tail reachability
             if is_food:
-                # Eating food: tail does NOT pop, body grows
                 sim_obstacles = body_set | {tuple(head)}
                 target_tail = tail
             else:
-                # Moving: tail will vacate unless snake is tiny
                 sim_obstacles = (body_set | {tuple(head)}) - {tail}
-                target_tail = tuple(body[-2]) if len(body) >= 2 else tuple(head)
+                target_tail = tail
 
-            # Check if escape route to tail exists
             tail_dist = bfs_shortest_path(new_pos, target_tail, sim_obstacles, w, h)
             can_escape_to_tail = (tail_dist is not None)
-
-            # True BFS path to food from new position
             food_path_len = bfs_shortest_path(new_pos, tuple(food), sim_obstacles, w, h)
             space = get_flood_fill_space(new_pos, sim_obstacles, w, h, max_depth=w * h)
 
             # Pocket Trap Detection:
-            # If entering this cell yields less free space than the snake's length, and there is no route to tail,
-            # it is a mathematically guaranteed death trap (delayed body collision).
             is_deadly_trap = (not can_escape_to_tail) and (space < len(body)) and (len(body) >= 4)
+            is_revisit = (new_pos in recent_set)
 
             analysis[d] = {
                 "safe": not is_deadly_trap,
@@ -137,7 +172,10 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
                 "is_food": is_food,
                 "can_reach_tail": can_escape_to_tail,
                 "tail_dist": tail_dist,
-                "food_path_len": food_path_len
+                "food_path_len": food_path_len,
+                "verified_food_safe": (d == verified_food_dir),
+                "is_revisit": is_revisit,
+                "snake_len": len(body)
             }
 
             if is_deadly_trap:
@@ -147,25 +185,27 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
                 criteria[d] = f"DANGER: Suicide trap! Only {space} cells available (snake length is {len(body)}). Fatal body crash."
             else:
                 safe_moves.append(d)
-                # Generate smart criteria tailored for long snakes
+                has_safe_space = can_escape_to_tail or (space >= len(body) * 1.5)
+                
+                # Smart criteria: Prioritize Safe Food Hunting and Breaking Tail Loops
                 if is_food:
-                    if can_escape_to_tail:
-                        criteria[d] = f"BEST: Eats food directly! Escape route to tail is open and safe ({space} free cells)."
+                    if has_safe_space:
+                        criteria[d] = f"CRITICAL BEST: Direct hit! Eats food at ({nx}, {ny}) with guaranteed safe space ({space} cells)."
                     else:
-                        criteria[d] = f"TRAP WARNING: Eats food but gets sealed inside coils with no exit to tail! High risk."
-                elif can_escape_to_tail:
-                    # When snake is long, having huge space is just as vital as approaching food
-                    if food_path_len is not None and (cur_bfs_food is None or food_path_len < cur_bfs_food) and space > len(body) * 1.5:
-                        criteria[d] = f"BEST: Safe move directly closer to food (path: {food_path_len} steps), escape route to tail guaranteed ({space} free cells)."
+                        criteria[d] = f"TRAP WARNING: Eats food but risks being trapped in coils ({space} cells). High risk."
+                elif d == verified_food_dir:
+                    criteria[d] = f"CRITICAL BEST: 100% verified safe shortest path to FOOD ({len(food_path) - 1} steps). Guaranteed exit to tail after eating. MUST take to eat fruit and break loops!"
+                elif food_path_len is not None and has_safe_space:
+                    criteria[d] = f"BEST: Safe approach to food (path: {food_path_len} steps, {space} free cells). Breaks out of tail loop."
+                elif can_escape_to_tail or space >= len(body) * 2:
+                    if verified_food_dir is not None:
+                        criteria[d] = f"AVOID LOOP: Circles tail away from food ({space} free cells). Food is safely accessible via {verified_food_dir}; do not loop!"
                     else:
-                        criteria[d] = f"SAFE WANDER: Safe open path ({space} free cells) with guaranteed route to tail. Ideal body maneuvering."
+                        criteria[d] = f"DEFENSIVE: Safe tail-following survival ({space} free cells) until food path clears."
                 else:
-                    if space >= len(body) * 2:
-                        criteria[d] = f"PASSABLE: Wide open area ({space} cells), temporary deviation from tail."
-                    else:
-                        criteria[d] = f"CAUTION: Narrow territory ({space} cells) with no direct path to tail. High risk of getting trapped."
+                    criteria[d] = f"CAUTION: Narrow territory ({space} cells) with no direct tail route."
 
-    # If all moves were classified as deadly traps (snake is in tight spot), allow the move with maximum space
+    # If all moves were classified as deadly traps, pick the one with maximum space
     if not safe_moves and danger_moves:
         best_trap_move = max(danger_moves, key=lambda d: analysis[d].get("space", 0))
         criteria[best_trap_move] = f"EMERGENCY: Maximum reachable free space ({analysis[best_trap_move].get('space', 0)} cells). Best survival chance."
@@ -174,15 +214,14 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
     # Situation summary for Laya
     situation = []
     if safe_moves:
-        best_opts = [d for d in safe_moves if "BEST" in criteria.get(d, "")]
-        if best_opts:
-            situation.append(f"Recommended safe direction(s) towards food: {', '.join(best_opts)}.")
+        if verified_food_dir:
+            situation.append(f"CRITICAL: Direct safe path to fruit is OPEN in direction: {verified_food_dir}! Advance towards food.")
         else:
-            safe_wander = [d for d in safe_moves if "SAFE" in criteria.get(d, "")]
-            if safe_wander:
-                situation.append(f"Safe wandering / tail-chasing direction(s): {', '.join(safe_wander)}.")
+            best_opts = [d for d in safe_moves if "BEST" in criteria.get(d, "")]
+            if best_opts:
+                situation.append(f"Recommended safe direction(s) towards food: {', '.join(best_opts)}.")
             else:
-                situation.append(f"Safe directions: {', '.join(safe_moves)}.")
+                situation.append(f"Safe defensive moves: {', '.join(safe_moves)}.")
     if danger_moves:
         situation.append(f"Fatal directions to avoid: {', '.join(danger_moves)}.")
 
@@ -193,6 +232,7 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
             "food_location": food,
             "snake_length": len(body),
             "current_direction": cur_dir,
+            "steps_since_food": steps_since_food,
             "safe_directions": safe_moves,
             "danger_directions": danger_moves,
             "situation": " ".join(situation)
@@ -202,25 +242,17 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
     questions = {
         "direction": {
             "type": "choice",
-            "instructions": "Which direction should the snake move to safely eat food and survive without hitting walls or getting trapped in its own body?",
+            "instructions": "Which direction should the snake move to safely eat food and advance without getting trapped or looping in its own body?",
             "criteria": criteria
         }
     }
 
     return state, questions, analysis
 
-def select_safe_action(choice: str, analysis: Dict[str, Any], probs: Dict[str, float]) -> tuple[str, bool]:
+def select_safe_action(choice: str, analysis: Dict[str, Any], probs: Dict[str, float], steps_since_food: int = 0) -> tuple[str, bool]:
     """Safety Reflex Arbiter:
-    Ensures that even if the high-level neural model makes a mistake or hesitates,
-    the snake NEVER takes an avoidable suicide move into its own body or wall.
+    Ensures the snake avoids suicide, but aggressively hunts food when safe to prevent infinite tail loops.
     """
-    choice_info = analysis.get(choice, {})
-
-    # 1. If chosen move is safe and not a deadly trap, accept it directly
-    if choice_info.get("safe", False) and not choice_info.get("is_trap", False):
-        return choice, False
-
-    # 2. If chosen move was fatal or a trap, find safe candidates
     safe_candidates = [
         d for d, info in analysis.items()
         if info.get("safe", False) and not info.get("is_trap", False)
@@ -240,16 +272,41 @@ def select_safe_action(choice: str, analysis: Dict[str, Any], probs: Dict[str, f
         )
         return best_fallback, True
 
-    # 3. Among safe candidates, pick the one with best long-term survival:
-    # Priority: (can_reach_tail > free space > model probability)
-    best_safe = max(
-        safe_candidates,
-        key=lambda d: (
-            1 if analysis[d].get("can_reach_tail", False) else 0,
-            analysis[d].get("space", 0),
-            probs.get(d, 0)
-        )
-    )
+    # Candidate scoring: prioritize verified food advancement over endless circling
+    def candidate_score(d: str) -> float:
+        info = analysis[d]
+        sc = 0.0
+        has_safe_space = info.get("can_reach_tail", False) or (info.get("space", 0) >= info.get("snake_len", 0) * 1.5)
+
+        if info.get("can_reach_tail", False):
+            sc += 1000.0
+        if info.get("verified_food_safe", False):
+            sc += 3000.0
+        if info.get("is_food", False) and has_safe_space:
+            sc += 5000.0
+        elif info.get("food_path_len") is not None and has_safe_space:
+            sc += max(0.0, 800.0 - info["food_path_len"] * 12.0)
+            if steps_since_food > 20:
+                sc += min(steps_since_food * 25.0, 2500.0)
+
+        # Anti-Looping Urgency: penalize revisiting recent cells if we have stalled without food
+        if steps_since_food > 20 and info.get("is_revisit", False):
+            sc -= 400.0
+
+        sc += min(info.get("space", 0), 250) * 1.0
+        sc += probs.get(d, 0.0) * 120.0
+        return sc
+
+    best_safe = max(safe_candidates, key=candidate_score)
+
+    # Check if raw model choice is safe and of comparable quality
+    choice_info = analysis.get(choice, {})
+    if choice_info.get("safe", False) and not choice_info.get("is_trap", False):
+        choice_score = candidate_score(choice)
+        best_score = candidate_score(best_safe)
+        if choice == best_safe or (best_score - choice_score < 200.0):
+            return choice, False
+
     return best_safe, True
 
 class PredictRequest(BaseModel):
@@ -258,11 +315,12 @@ class PredictRequest(BaseModel):
     body: List[List[int]]
     grid_size: List[int] = [14, 14]
     current_direction: str = "RIGHT"
+    steps_since_food: int = 0
 
 @app.post("/api/predict")
 def predict_move(req: PredictRequest):
     state, questions, analysis = build_laya_prompt(
-        req.head, req.food, req.body, req.grid_size, req.current_direction
+        req.head, req.food, req.body, req.grid_size, req.current_direction, req.steps_since_food
     )
 
     t0 = time.perf_counter()
@@ -276,7 +334,7 @@ def predict_move(req: PredictRequest):
     inference_ms = round((t1 - t0) * 1000, 1)
 
     # Apply Safety Reflex Arbiter
-    final_choice, overridden = select_safe_action(raw_choice, analysis, probs)
+    final_choice, overridden = select_safe_action(raw_choice, analysis, probs, req.steps_since_food)
     is_safe = analysis.get(final_choice, {}).get("safe", False)
 
     return {
@@ -295,6 +353,7 @@ def predict_move(req: PredictRequest):
 @app.websocket("/ws/play")
 async def websocket_play(websocket: WebSocket):
     await websocket.accept()
+    recent_heads = deque(maxlen=24)
     try:
         while True:
             data = await websocket.receive_text()
@@ -305,8 +364,15 @@ async def websocket_play(websocket: WebSocket):
             body = payload["body"]
             grid_size = payload.get("grid_size", [14, 14])
             cur_dir = payload.get("current_direction", "RIGHT")
+            steps_since_food = payload.get("steps_since_food", 0)
 
-            state, questions, analysis = build_laya_prompt(head, food, body, grid_size, cur_dir)
+            if steps_since_food == 0:
+                recent_heads.clear()
+            recent_heads.append(tuple(head))
+
+            state, questions, analysis = build_laya_prompt(
+                head, food, body, grid_size, cur_dir, steps_since_food, list(recent_heads)
+            )
 
             t0 = time.perf_counter()
             # Run inference in worker thread to prevent blocking event loop
@@ -320,7 +386,7 @@ async def websocket_play(websocket: WebSocket):
             inference_ms = round((t1 - t0) * 1000, 1)
 
             # Apply Safety Reflex Arbiter
-            final_choice, overridden = select_safe_action(raw_choice, analysis, probs)
+            final_choice, overridden = select_safe_action(raw_choice, analysis, probs, steps_since_food)
 
             resp = {
                 "step_id": payload.get("step_id", 0),

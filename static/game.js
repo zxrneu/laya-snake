@@ -230,6 +230,7 @@ class SnakeGame {
     ];
 
     this.spawnFood();
+    this.stepsSinceFood = 0;
     this.updateStats();
     this.gameOverlay.classList.remove('show');
     this.addLog('游戏', `新对局开始。网格: ${this.gridSize}x${this.gridSize}，初始长度: 3。`);
@@ -266,7 +267,8 @@ class SnakeGame {
       food: this.food,
       body: this.snake.slice(1),
       grid_size: [this.gridSize, this.gridSize],
-      current_direction: this.direction
+      current_direction: this.direction,
+      steps_since_food: this.stepsSinceFood || 0
     };
   }
 
@@ -396,6 +398,7 @@ class SnakeGame {
     this.snake.unshift(newHead);
 
     if (isEating) {
+      this.stepsSinceFood = 0;
       this.score += 10;
       if (this.score > this.highScore) {
         this.highScore = this.score;
@@ -405,6 +408,7 @@ class SnakeGame {
       this.addLog('进食', `精准捕获食物！长度增至 ${this.snake.length}，当前得分: ${this.score}。`, 'eat');
       this.spawnFood();
     } else {
+      this.stepsSinceFood = (this.stepsSinceFood || 0) + 1;
       this.snake.pop();
     }
 
