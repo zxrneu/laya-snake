@@ -102,6 +102,30 @@ def simulate_path_safety(head, food, body, w, h):
     tail_path = bfs_shortest_path(virtual_head, virtual_tail, virtual_obstacles, w, h)
     return path, (tail_path is not None)
 
+def is_trough_dead_end(new_pos: Tuple[int, int], head: Tuple[int, int], sim_obstacles: set, w: int, h: int, snake_len: int) -> bool:
+    """Traces a 1-wide trench along a wall or between bodies to check if it dead-ends before the snake fits."""
+    moves = {"UP": (0, -1), "DOWN": (0, 1), "LEFT": (-1, 0), "RIGHT": (1, 0)}
+    curr = new_pos
+    prev = tuple(head)
+    depth = 1
+    while depth < min(snake_len, 30):
+        exits = [
+            (curr[0] + dx, curr[1] + dy)
+            for dx, dy in moves.values()
+            if 0 <= curr[0] + dx < w and 0 <= curr[1] + dy < h
+            and (curr[0] + dx, curr[1] + dy) not in sim_obstacles
+            and (curr[0] + dx, curr[1] + dy) != prev
+        ]
+        if len(exits) == 0:
+            return True
+        elif len(exits) == 1:
+            prev = curr
+            curr = exits[0]
+            depth += 1
+        else:
+            return False
+    return False
+
 def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], grid_size: List[int], cur_dir: str, steps_since_food: int = 0, recent_heads: list = None):
     w, h = grid_size
     moves = {"UP": (0, -1), "DOWN": (0, 1), "LEFT": (-1, 0), "RIGHT": (1, 0)}
@@ -161,8 +185,36 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
             food_path_len = bfs_shortest_path(new_pos, tuple(food), sim_obstacles, w, h)
             space = get_flood_fill_space(new_pos, sim_obstacles, w, h, max_depth=w * h)
 
-            # Pocket Trap Detection:
-            is_deadly_trap = (not can_escape_to_tail) and (space < len(body)) and (len(body) >= 4)
+            is_edge = (nx == 0 or nx == w - 1 or ny == 0 or ny == h - 1)
+            is_corner = (nx in [0, w-1] and ny in [0, h-1])
+
+            # Count unblocked neighbors of new_pos
+            open_neighbors = sum(
+                1 for ndx, ndy in moves.values()
+                if 0 <= nx + ndx < w and 0 <= ny + ndy < h and (nx + ndx, ny + ndy) not in sim_obstacles
+            )
+
+            # 1. 1-wide dead-end trough check (funnel into wall/corner)
+            is_trough_trap = False
+            if open_neighbors <= 2 and not is_food and len(body) >= 5:
+                is_trough_trap = is_trough_dead_end(new_pos, tuple(head), sim_obstacles, w, h, len(body))
+
+            # 2. Corner trap: corner cell with the other exit blocked by body
+            is_corner_trap = False
+            if is_corner and not is_food:
+                corner_nbrs = [
+                    (nx + cdx, ny + cdy)
+                    for cdx, cdy in moves.values()
+                    if 0 <= nx + cdx < w and 0 <= ny + cdy < h
+                ]
+                other_exit = [c for c in corner_nbrs if c != tuple(head)]
+                if other_exit and other_exit[0] in sim_obstacles:
+                    is_corner_trap = True
+
+            # 3. Pocket Trap Detection:
+            is_pocket_trap = (not can_escape_to_tail) and (space <= len(body) + 2) and (len(body) >= 4)
+
+            is_deadly_trap = is_trough_trap or is_corner_trap or is_pocket_trap
             is_revisit = (new_pos in recent_set)
 
             analysis[d] = {
@@ -175,14 +227,24 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
                 "food_path_len": food_path_len,
                 "verified_food_safe": (d == verified_food_dir),
                 "is_revisit": is_revisit,
-                "snake_len": len(body)
+                "snake_len": len(body),
+                "is_edge": is_edge,
+                "is_corner": is_corner,
+                "open_neighbors": open_neighbors,
+                "is_trough_trap": is_trough_trap,
+                "is_corner_trap": is_corner_trap
             }
 
             if is_deadly_trap:
-                reason = f"Dead-end pocket ({space} cells < length {len(body)})"
+                if is_corner_trap:
+                    reason = "Dead-end corner trap (exit blocked by body)"
+                elif is_trough_trap:
+                    reason = "Narrow boundary trough funneling into wall/dead-end"
+                else:
+                    reason = f"Dead-end pocket ({space} cells <= needed {len(body) + 2})"
                 analysis[d]["reason"] = reason
                 danger_moves.append(d)
-                criteria[d] = f"DANGER: Suicide trap! Only {space} cells available (snake length is {len(body)}). Fatal body crash."
+                criteria[d] = f"DANGER: Boundary / body trap! {reason}. Fatal body crash."
             else:
                 safe_moves.append(d)
                 has_safe_space = can_escape_to_tail or (space >= len(body) * 1.5)
@@ -205,9 +267,13 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
                 else:
                     criteria[d] = f"CAUTION: Narrow territory ({space} cells) with no direct tail route."
 
-    # If all moves were classified as deadly traps, pick the one with maximum space
-    if not safe_moves and danger_moves:
-        best_trap_move = max(danger_moves, key=lambda d: analysis[d].get("space", 0))
+    # If all moves were classified as deadly traps, pick the one with maximum space among walkable cells
+    walkable_danger = [
+        d for d in danger_moves 
+        if analysis[d].get("reason") not in ("Wall", "Body Collision", "Physically Forbidden (Reverse)")
+    ]
+    if not safe_moves and walkable_danger:
+        best_trap_move = max(walkable_danger, key=lambda d: (analysis[d].get("space", 0), analysis[d].get("open_neighbors", 0)))
         criteria[best_trap_move] = f"EMERGENCY: Maximum reachable free space ({analysis[best_trap_move].get('space', 0)} cells). Best survival chance."
         safe_moves.append(best_trap_move)
 
@@ -258,21 +324,28 @@ def select_safe_action(choice: str, analysis: Dict[str, Any], probs: Dict[str, f
         if info.get("safe", False) and not info.get("is_trap", False)
     ]
 
-    # If no 100% clean safe candidate exists, fallback to move with largest space
+    # If no 100% clean safe candidate exists, fallback to walkable move with max space & mobility
     if not safe_candidates:
-        valid_candidates = [d for d in analysis.keys() if analysis[d].get("reason") != "Physically Forbidden (Reverse)"]
-        if not valid_candidates:
-            return choice, False
+        walkable_candidates = [
+            d for d in analysis.keys()
+            if analysis[d].get("reason") not in ("Wall", "Body Collision", "Physically Forbidden (Reverse)")
+        ]
+        if not walkable_candidates:
+            valid = [d for d in analysis.keys() if analysis[d].get("reason") != "Physically Forbidden (Reverse)"]
+            return (valid[0] if valid else choice), False
+
         best_fallback = max(
-            valid_candidates,
+            walkable_candidates,
             key=lambda d: (
+                0 if (analysis[d].get("is_trough_trap") or analysis[d].get("is_corner_trap")) else 1,
                 analysis[d].get("space", 0),
-                probs.get(d, 0)
+                analysis[d].get("open_neighbors", 0),
+                probs.get(d, 0.0)
             )
         )
         return best_fallback, True
 
-    # Candidate scoring: prioritize verified food advancement over endless circling
+    # Candidate scoring: prioritize verified food advancement over endless circling and wall coffins
     def candidate_score(d: str) -> float:
         info = analysis[d]
         sc = 0.0
@@ -282,8 +355,13 @@ def select_safe_action(choice: str, analysis: Dict[str, Any], probs: Dict[str, f
             sc += 1000.0
         if info.get("verified_food_safe", False):
             sc += 3000.0
-        if info.get("is_food", False) and has_safe_space:
-            sc += 5000.0
+        if info.get("is_food", False):
+            if info.get("can_reach_tail", False):
+                sc += 5000.0
+            elif info.get("space", 0) >= info.get("snake_len", 0) * 1.5:
+                sc += 2000.0
+            else:
+                sc -= 1000.0
         elif info.get("food_path_len") is not None and has_safe_space:
             sc += max(0.0, 800.0 - info["food_path_len"] * 12.0)
             if steps_since_food > 20:
@@ -292,6 +370,13 @@ def select_safe_action(choice: str, analysis: Dict[str, Any], probs: Dict[str, f
         # Anti-Looping Urgency: penalize revisiting recent cells if we have stalled without food
         if steps_since_food > 20 and info.get("is_revisit", False):
             sc -= 400.0
+
+        # Mobility bonus: reward open maneuverability (more free neighbors = more options)
+        sc += info.get("open_neighbors", 0) * 50.0
+
+        # Gentle avoidance of dead corners when not eating food
+        if info.get("is_corner", False) and not info.get("is_food", False):
+            sc -= 150.0
 
         sc += min(info.get("space", 0), 250) * 1.0
         sc += probs.get(d, 0.0) * 120.0
