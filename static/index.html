@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Laya Neural Snake · 非自回归决策模型贪吃蛇</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-title">LAYA NEURAL SNAKE <span class="badge-accent">AI-DRIVEN</span></div>
+          <div class="brand-subtitle">基于 convaiinnovations/laya 决策大模型的实时端到端空间控制</div>
+        </div>
+      </div>
+      <div class="header-badges">
+        <div class="status-pill active" id="connectionStatus">
+          <span class="dot"></span>
+          <span id="connectionText">WebSocket 连接中...</span>
+        </div>
+        <div class="tech-pill">
+          <span class="tech-label">MODEL</span>
+          <span class="tech-value">ModernBERT 421M</span>
+        </div>
+        <div class="tech-pill">
+          <span class="tech-label">BACKEND</span>
+          <span class="tech-value" id="deviceTag">Apple Metal (MPS)</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="main-layout">
+      <!-- Left: Game Stage -->
+      <section class="game-section">
+        <!-- Stats Top Bar -->
+        <div class="stats-bar">
+          <div class="stat-card">
+            <span class="stat-label">SCORE 得分</span>
+            <span class="stat-value highlight" id="scoreDisplay">0</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">SNAKE LENGTH 长度</span>
+            <span class="stat-value" id="lengthDisplay">3</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">HIGH SCORE 最高分</span>
+            <span class="stat-value" id="highScoreDisplay">0</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">STEPS 步数</span>
+            <span class="stat-value" id="stepsDisplay">0</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">LATENCY 推理耗时</span>
+            <span class="stat-value accent" id="latencyDisplay">-- ms</span>
+          </div>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="canvas-wrapper">
+          <canvas id="gameCanvas" width="560" height="560"></canvas>
+          <div class="game-overlay" id="gameOverlay">
+            <div class="overlay-card">
+              <h2 id="overlayTitle">GAME OVER</h2>
+              <p id="overlayDesc">碰撞已发生，模型正在等待重新开始。</p>
+              <button class="btn btn-primary" id="overlayRestartBtn">重新开始 (Restart)</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Control Bar -->
+        <div class="controls-toolbar">
+          <div class="controls-group">
+            <button class="btn btn-glow" id="toggleAiBtn">
+              <span class="icon">⚡</span>
+              <span id="aiBtnText">启动 Laya 自动驾驶</span>
+            </button>
+            <button class="btn btn-secondary" id="stepAiBtn" title="单步让模型推演一步">
+              <span class="icon">⏭</span>
+              <span>单步推演</span>
+            </button>
+            <button class="btn btn-secondary" id="restartBtn" title="重置游戏">
+              <span class="icon">↺</span>
+              <span>重置</span>
+            </button>
+          </div>
+
+          <div class="controls-group">
+            <div class="mode-toggle">
+              <button class="mode-btn active" id="modeAiBtn">AI 托管</button>
+              <button class="mode-btn" id="modeManualBtn">手动操控 (WASD)</button>
+            </div>
+          </div>
+
+          <div class="controls-group speed-group">
+            <span class="control-label">步频间隔:</span>
+            <input type="range" id="speedSlider" min="50" max="600" step="25" value="180">
+            <span class="speed-val" id="speedValText">180ms</span>
+          </div>
+
+          <div class="controls-group">
+            <span class="control-label">网格:</span>
+            <select id="gridSizeSelect" class="styled-select">
+              <option value="16">16 x 16</option>
+              <option value="20" selected>20 x 20 (推荐)</option>
+              <option value="24">24 x 24 (宽阔)</option>
+              <option value="28">28 x 28 (大型)</option>
+              <option value="32">32 x 32 (超大)</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right: Laya Model Telemetry & Brain Visualizer -->
+      <section class="telemetry-section">
+        <!-- Probabilities Card -->
+        <div class="panel-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="dot-indicator"></span>
+              <span>LAYA 动作概率分布 (Action Probabilities)</span>
+            </div>
+            <div class="card-extra" id="choiceBadge">WAITING</div>
+          </div>
+          <div class="probabilities-container">
+            <!-- UP -->
+            <div class="prob-row" id="probRow-UP">
+              <div class="prob-header">
+                <span class="dir-tag"><span class="arrow">▲</span> UP (上)</span>
+                <span class="dir-status" id="status-UP">--</span>
+                <span class="dir-pct" id="pct-UP">0.0%</span>
+              </div>
+              <div class="prob-track">
+                <div class="prob-fill" id="fill-UP" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- DOWN -->
+            <div class="prob-row" id="probRow-DOWN">
+              <div class="prob-header">
+                <span class="dir-tag"><span class="arrow">▼</span> DOWN (下)</span>
+                <span class="dir-status" id="status-DOWN">--</span>
+                <span class="dir-pct" id="pct-DOWN">0.0%</span>
+              </div>
+              <div class="prob-track">
+                <div class="prob-fill" id="fill-DOWN" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- LEFT -->
+            <div class="prob-row" id="probRow-LEFT">
+              <div class="prob-header">
+                <span class="dir-tag"><span class="arrow">◀</span> LEFT (左)</span>
+                <span class="dir-status" id="status-LEFT">--</span>
+                <span class="dir-pct" id="pct-LEFT">0.0%</span>
+              </div>
+              <div class="prob-track">
+                <div class="prob-fill" id="fill-LEFT" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- RIGHT -->
+            <div class="prob-row" id="probRow-RIGHT">
+              <div class="prob-header">
+                <span class="dir-tag"><span class="arrow">▶</span> RIGHT (右)</span>
+                <span class="dir-status" id="status-RIGHT">--</span>
+                <span class="dir-pct" id="pct-RIGHT">0.0%</span>
+              </div>
+              <div class="prob-track">
+                <div class="prob-fill" id="fill-RIGHT" style="width: 0%"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Model Confidence & Diagnostics -->
+          <div class="diagnostics-bar">
+            <div class="diag-item">
+              <span class="diag-label">标定置信度 (Confidence)</span>
+              <div class="diag-meter">
+                <div class="diag-meter-fill" id="confidenceFill" style="width: 0%"></div>
+              </div>
+              <span class="diag-val" id="confidenceVal">0.00</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">模型类型</span>
+              <span class="diag-tag">Non-Autoregressive Choice Head</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Prompt & Reasoning Inspector -->
+        <div class="panel-card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+              <span>实时态势感知与选项评分 (Prompt & Criteria)</span>
+            </div>
+            <button class="toggle-btn" id="toggleInspectorBtn">展开 JSON</button>
+          </div>
+          <div class="inspector-body">
+            <div class="inspector-summary" id="situationText">
+              正在等待游戏初始化...
+            </div>
+            <div class="criteria-list" id="criteriaList">
+              <!-- Dynamically populated -->
+            </div>
+            <pre class="json-inspector" id="jsonInspector" style="display: none;"></pre>
+          </div>
+        </div>
+
+        <!-- Real-time Decision Log -->
+        <div class="panel-card log-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span class="dot-indicator green"></span>
+              <span>实时决策日志流 (Telemetry Stream)</span>
+            </div>
+            <button class="clear-btn" id="clearLogBtn">清空</button>
+          </div>
+          <div class="log-stream" id="logStream">
+            <div class="log-entry system">
+              <span class="time">[INIT]</span>
+              <span class="text">系统就绪，Laya 421M 决策引擎已在本地就绪。点击“启动 Laya 自动驾驶”开始。</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/game.js"></script>
+</body>
+</html>
