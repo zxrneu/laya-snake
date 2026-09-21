@@ -4,6 +4,10 @@
 
 不同于传统生成式 LLM 缓慢的逐字采样与幻觉问题，Laya 采用 **ModernBERT-large (421M)** 编码器底座与专门的决策原语（`choice`），单步前向推演即可输出高标定性、鲁棒的动作概率分布。
 
+<p align="center">
+  <img src="assets/demo.gif" alt="Laya Neural Snake Demo" width="720" style="border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);" />
+</p>
+
 ---
 
 ## 🌟 核心特性
@@ -87,6 +91,8 @@ uv run python server.py
 
 ```
 0921/
+├── assets/
+│   └── demo.gif           # 游戏实机运行演示动图
 ├── server.py              # FastAPI 后端服务（模型加载、态势感知、WS/REST 端点）
 ├── pyproject.toml         # uv 项目配置与依赖声明
 ├── uv.lock                # 锁定依赖版本
