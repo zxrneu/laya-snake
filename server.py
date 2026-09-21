@@ -44,7 +44,8 @@ class GameStateRequest(BaseModel):
     food: List[int]
     body: List[List[int]]
     grid_size: List[int] = [10, 10]
-    cur_dir: str = "RIGHT"
+    cur_dir: Optional[str] = None
+    current_direction: Optional[str] = None
     steps_since_food: int = 0
     recent_heads: Optional[List[List[int]]] = None
 
@@ -103,8 +104,9 @@ def select_safe_action(
 async def predict_direction(req: GameStateRequest):
     t0 = time.perf_counter()
     recent = req.recent_heads or []
+    direction = req.cur_dir or req.current_direction or "RIGHT"
     state, questions, analysis = build_laya_prompt(
-        req.head, req.food, req.body, req.grid_size, req.cur_dir, req.steps_since_food, recent
+        req.head, req.food, req.body, req.grid_size, direction, req.steps_since_food, recent
     )
 
     results = agent.predict(state, questions)
@@ -139,13 +141,16 @@ async def websocket_play(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
+            t0 = time.perf_counter()
             game_state = json.loads(data)
 
             head = game_state["head"]
             food = game_state["food"]
             body = game_state["body"]
             grid_size = game_state.get("grid_size", [10, 10])
-            cur_dir = game_state.get("cur_dir", "RIGHT")
+            cur_dir = game_state.get("cur_dir") or game_state.get("current_direction") or "RIGHT"
+            steps_since_food = game_state.get("steps_since_food", steps_since_food)
+            step_id = game_state.get("step_id")
 
             state, questions, analysis = build_laya_prompt(
                 head, food, body, grid_size, cur_dir, steps_since_food, list(recent_heads)
@@ -155,8 +160,10 @@ async def websocket_play(websocket: WebSocket):
             direction_ans = results["answers"]["direction"]
             raw_choice = direction_ans["choice"]
             probs = direction_ans["probabilities"]
+            confidence = direction_ans.get("confidence", 0.0)
 
             final_choice, overridden = select_safe_action(raw_choice, analysis, probs, steps_since_food)
+            t1 = time.perf_counter()
 
             recent_heads.append(tuple(head))
             if head[0] == food[0] and head[1] == food[1]:
@@ -168,13 +175,19 @@ async def websocket_play(websocket: WebSocket):
             await websocket.send_text(
                 json.dumps(
                     {
+                        "step_id": step_id,
+                        "choice": final_choice,
                         "direction": final_choice,
                         "raw_choice": raw_choice,
+                        "raw_model_choice": raw_choice,
                         "overridden": overridden,
                         "probabilities": probs,
+                        "confidence": confidence,
+                        "inference_ms": round((t1 - t0) * 1000, 1),
+                        "is_safe": analysis.get(final_choice, {}).get("safe", False),
                         "analysis": analysis,
                         "state_sent": state,
-                        "criteria": questions["direction"]["criteria"],
+                        "criteria_sent": questions["direction"]["criteria"],
                     }
                 )
             )

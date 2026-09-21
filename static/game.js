@@ -345,12 +345,12 @@ class SnakeGame {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(state)
       })
-      .then(r => r.json())
-      .then(data => callback(data))
-      .catch(err => {
-        console.error('Model query failed:', err);
-        this.isWaitingForModel = false;
-      });
+        .then(r => r.json())
+        .then(data => callback(data))
+        .catch(err => {
+          console.error('Model query failed:', err);
+          this.isWaitingForModel = false;
+        });
     }
   }
 
