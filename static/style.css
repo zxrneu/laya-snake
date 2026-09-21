@@ -248,40 +248,233 @@ body {
 .game-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(9, 13, 22, 0.85);
-  backdrop-filter: blur(8px);
+  background: transparent;
+  pointer-events: none;
   display: none;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
+  padding: 14px;
   z-index: 10;
+  transition: all 0.3s ease;
 }
 
 .game-overlay.show {
   display: flex;
-  animation: fadeIn 0.3s ease;
+  animation: fadeIn 0.25s ease;
 }
 
 .overlay-card {
-  text-align: center;
-  padding: 32px 40px;
-  background: var(--bg-panel);
-  border: 1px solid rgba(244, 63, 94, 0.4);
+  pointer-events: auto;
+  text-align: left;
+  padding: 16px 20px;
+  background: rgba(13, 19, 32, 0.94);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(244, 63, 94, 0.5);
   border-radius: var(--radius-md);
-  box-shadow: 0 10px 40px rgba(244, 63, 94, 0.2);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65), 0 0 25px rgba(244, 63, 94, 0.22);
+  width: 100%;
+  max-width: 532px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.overlay-card:hover {
+  border-color: rgba(244, 63, 94, 0.75);
+}
+
+.overlay-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.overlay-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.overlay-danger-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent-rose);
+  box-shadow: 0 0 10px var(--accent-rose);
+  animation: pulseDot 1.2s infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.5; }
 }
 
 .overlay-card h2 {
-  font-size: 2rem;
+  font-size: 1.3rem;
   font-weight: 800;
   color: var(--accent-rose);
-  margin-bottom: 8px;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+
+.overlay-toggle-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.2s;
+}
+
+.overlay-toggle-btn:hover {
+  background: rgba(0, 242, 254, 0.15);
+  border-color: var(--primary);
+  color: #fff;
 }
 
 .overlay-card p {
   color: var(--text-muted);
-  font-size: 0.95rem;
-  margin-bottom: 24px;
+  font-size: 0.83rem;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.overlay-details {
+  margin-bottom: 12px;
+}
+
+.collision-info-box {
+  background: rgba(244, 63, 94, 0.08);
+  border: 1px solid rgba(244, 63, 94, 0.28);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 0.82rem;
+}
+
+.collision-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+
+.badge-danger {
+  background: rgba(244, 63, 94, 0.25);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.5);
+}
+
+.badge-warning {
+  background: rgba(245, 158, 11, 0.25);
+  color: #fcd34d;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+}
+
+.badge-subtle {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.collision-text {
+  color: var(--text-secondary);
+  line-height: 1.45;
+  font-size: 0.8rem;
+}
+
+.collision-text code {
+  background: rgba(0, 0, 0, 0.45);
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--primary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+}
+
+.collision-text strong {
+  color: #fff;
+}
+
+.overlay-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Minibar for full view of the board */
+.overlay-minibar {
+  pointer-events: auto;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(13, 19, 32, 0.94);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(244, 63, 94, 0.5);
+  border-radius: 30px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  animation: fadeIn 0.2s ease;
+}
+
+.minibar-badge {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--accent-rose);
+}
+
+.minibar-desc {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  max-width: 170px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-mini {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  border-radius: 12px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-mini:hover {
+  background: rgba(0, 242, 254, 0.2);
+  border-color: var(--primary);
+}
+
+.btn-mini-primary {
+  background: var(--accent-rose);
+  border-color: var(--accent-rose);
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn-mini-primary:hover {
+  background: #e11d48;
 }
 
 /* Controls Toolbar */
@@ -413,6 +606,78 @@ body {
   font-size: 0.82rem;
   outline: none;
   cursor: pointer;
+}
+
+.styled-input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  color: var(--primary);
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  font-weight: 700;
+  outline: none;
+  width: 78px;
+  text-align: center;
+  transition: all 0.2s ease;
+}
+
+.styled-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.35);
+  background: rgba(0, 242, 254, 0.08);
+}
+
+.grid-ctrl-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.grid-input-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.grid-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chip-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.chip-btn:hover {
+  background: rgba(0, 242, 254, 0.12);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.chip-btn.active {
+  background: rgba(0, 242, 254, 0.2);
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow: 0 0 8px rgba(0, 242, 254, 0.3);
+}
+
+.btn-sm {
+  padding: 5px 9px;
+  font-size: 0.75rem;
+  border-radius: 5px;
 }
 
 /* Right Section: Telemetry */

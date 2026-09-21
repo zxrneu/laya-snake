@@ -72,10 +72,30 @@
         <div class="canvas-wrapper">
           <canvas id="gameCanvas" width="560" height="560"></canvas>
           <div class="game-overlay" id="gameOverlay">
-            <div class="overlay-card">
-              <h2 id="overlayTitle">GAME OVER</h2>
+            <div class="overlay-card" id="overlayCard">
+              <div class="overlay-card-header">
+                <div class="overlay-title-group">
+                  <span class="overlay-danger-dot"></span>
+                  <h2 id="overlayTitle">GAME OVER</h2>
+                </div>
+                <button class="overlay-toggle-btn" id="overlayToggleBtn" title="切换精简浮窗以观察整个棋盘">
+                  <span id="overlayToggleIcon">👁️</span> <span id="overlayToggleText">收起面板</span>
+                </button>
+              </div>
               <p id="overlayDesc">碰撞已发生，模型正在等待重新开始。</p>
-              <button class="btn btn-primary" id="overlayRestartBtn">重新开始 (Restart)</button>
+              <div class="overlay-details" id="overlayDetails"></div>
+              <div class="overlay-actions">
+                <button class="btn btn-primary" id="overlayRestartBtn">↺ 重新开始 (Restart)</button>
+                <button class="btn btn-secondary" id="inspectBoardBtn">👁️ 查看完整棋盘</button>
+              </div>
+            </div>
+
+            <!-- Minimized Floating Bar for unobscured board inspection -->
+            <div class="overlay-minibar" id="overlayMinibar" style="display: none;">
+              <span class="minibar-badge">⚠️ 对局结束</span>
+              <span class="minibar-desc" id="minibarDesc">碰撞已发生</span>
+              <button class="btn-mini" id="minibarExpandBtn">展开分析</button>
+              <button class="btn-mini btn-mini-primary" id="minibarRestartBtn">↺ 重开</button>
             </div>
           </div>
         </div>
@@ -110,15 +130,34 @@
             <span class="speed-val" id="speedValText">180ms</span>
           </div>
 
-          <div class="controls-group">
-            <span class="control-label">网格:</span>
-            <select id="gridSizeSelect" class="styled-select">
-              <option value="16">16 x 16</option>
-              <option value="20" selected>20 x 20 (推荐)</option>
-              <option value="24">24 x 24 (宽阔)</option>
-              <option value="28">28 x 28 (大型)</option>
-              <option value="32">32 x 32 (超大)</option>
-            </select>
+          <div class="controls-group grid-ctrl-group">
+            <span class="control-label">网格大小:</span>
+            <div class="grid-input-wrapper">
+              <input
+                type="text"
+                id="gridSizeInput"
+                class="styled-input"
+                value="20*20"
+                placeholder="6*6 / 10"
+                list="gridPresets"
+                title="输入网格大小，如 6*6, 10*10, 20*20 或单个数字 6"
+              >
+              <datalist id="gridPresets">
+                <option value="6*6">6 x 6 (极简)</option>
+                <option value="8*8">8 x 8 (紧凑)</option>
+                <option value="10*10">10 x 10 (经典对战)</option>
+                <option value="16*16">16 x 16 (标准)</option>
+                <option value="20*20">20 x 20 (推荐平衡)</option>
+                <option value="24*24">24 x 24 (宽阔)</option>
+                <option value="32*32">32 x 32 (超大)</option>
+              </datalist>
+              <button class="btn btn-secondary btn-sm" id="applyGridBtn" title="应用网格设置">确定</button>
+            </div>
+            <div class="grid-chips">
+              <button class="chip-btn" data-grid="6*6" title="快速切换到 6*6">6*6</button>
+              <button class="chip-btn" data-grid="10*10" title="快速切换到 10*10">10*10</button>
+              <button class="chip-btn active" data-grid="20*20" title="快速切换到 20*20">20*20</button>
+            </div>
           </div>
         </div>
       </section>
