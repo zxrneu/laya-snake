@@ -125,9 +125,14 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
             food_path_len = bfs_shortest_path(new_pos, tuple(food), sim_obstacles, w, h)
             space = get_flood_fill_space(new_pos, sim_obstacles, w, h, max_depth=w * h)
 
-            safe_moves.append(d)
+            # Pocket Trap Detection:
+            # If entering this cell yields less free space than the snake's length, and there is no route to tail,
+            # it is a mathematically guaranteed death trap (delayed body collision).
+            is_deadly_trap = (not can_escape_to_tail) and (space < len(body)) and (len(body) >= 4)
+
             analysis[d] = {
-                "safe": True,
+                "safe": not is_deadly_trap,
+                "is_trap": is_deadly_trap,
                 "space": space,
                 "is_food": is_food,
                 "can_reach_tail": can_escape_to_tail,
@@ -135,31 +140,45 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
                 "food_path_len": food_path_len
             }
 
-            # Generate smart criteria
-            if is_food:
-                if can_escape_to_tail:
-                    criteria[d] = f"BEST: Eats food directly! Escape route to tail is open and safe ({space} free cells)."
-                else:
-                    criteria[d] = f"TRAP WARNING: Eats food but gets sealed inside coils with no exit to tail! High risk."
-            elif can_escape_to_tail:
-                if food_path_len is not None and (cur_bfs_food is None or food_path_len < cur_bfs_food):
-                    criteria[d] = f"BEST: Safe move directly closer to food (path: {food_path_len} steps), escape route to tail guaranteed ({space} free cells)."
-                else:
-                    criteria[d] = f"SAFE WANDER: Safe open path ({space} free cells) with guaranteed route to tail. Good maneuvering."
+            if is_deadly_trap:
+                reason = f"Dead-end pocket ({space} cells < length {len(body)})"
+                analysis[d]["reason"] = reason
+                danger_moves.append(d)
+                criteria[d] = f"DANGER: Suicide trap! Only {space} cells available (snake length is {len(body)}). Fatal body crash."
             else:
-                if space > len(body) * 1.5:
-                    criteria[d] = f"PASSABLE: Open area ({space} cells), but no direct path to tail."
+                safe_moves.append(d)
+                # Generate smart criteria tailored for long snakes
+                if is_food:
+                    if can_escape_to_tail:
+                        criteria[d] = f"BEST: Eats food directly! Escape route to tail is open and safe ({space} free cells)."
+                    else:
+                        criteria[d] = f"TRAP WARNING: Eats food but gets sealed inside coils with no exit to tail! High risk."
+                elif can_escape_to_tail:
+                    # When snake is long, having huge space is just as vital as approaching food
+                    if food_path_len is not None and (cur_bfs_food is None or food_path_len < cur_bfs_food) and space > len(body) * 1.5:
+                        criteria[d] = f"BEST: Safe move directly closer to food (path: {food_path_len} steps), escape route to tail guaranteed ({space} free cells)."
+                    else:
+                        criteria[d] = f"SAFE WANDER: Safe open path ({space} free cells) with guaranteed route to tail. Ideal body maneuvering."
                 else:
-                    criteria[d] = f"CAUTION: Pocket dead-end ({space} cells) with NO route to tail. Likely suicide trap."
+                    if space >= len(body) * 2:
+                        criteria[d] = f"PASSABLE: Wide open area ({space} cells), temporary deviation from tail."
+                    else:
+                        criteria[d] = f"CAUTION: Narrow territory ({space} cells) with no direct path to tail. High risk of getting trapped."
+
+    # If all moves were classified as deadly traps (snake is in tight spot), allow the move with maximum space
+    if not safe_moves and danger_moves:
+        best_trap_move = max(danger_moves, key=lambda d: analysis[d].get("space", 0))
+        criteria[best_trap_move] = f"EMERGENCY: Maximum reachable free space ({analysis[best_trap_move].get('space', 0)} cells). Best survival chance."
+        safe_moves.append(best_trap_move)
 
     # Situation summary for Laya
     situation = []
     if safe_moves:
-        best_opts = [d for d in safe_moves if "BEST" in criteria[d]]
+        best_opts = [d for d in safe_moves if "BEST" in criteria.get(d, "")]
         if best_opts:
             situation.append(f"Recommended safe direction(s) towards food: {', '.join(best_opts)}.")
         else:
-            safe_wander = [d for d in safe_moves if "SAFE" in criteria[d]]
+            safe_wander = [d for d in safe_moves if "SAFE" in criteria.get(d, "")]
             if safe_wander:
                 situation.append(f"Safe wandering / tail-chasing direction(s): {', '.join(safe_wander)}.")
             else:
@@ -183,12 +202,55 @@ def build_laya_prompt(head: List[int], food: List[int], body: List[List[int]], g
     questions = {
         "direction": {
             "type": "choice",
-            "instructions": "Which direction should the snake move to safely eat food and survive without hitting walls or getting trapped?",
+            "instructions": "Which direction should the snake move to safely eat food and survive without hitting walls or getting trapped in its own body?",
             "criteria": criteria
         }
     }
 
     return state, questions, analysis
+
+def select_safe_action(choice: str, analysis: Dict[str, Any], probs: Dict[str, float]) -> tuple[str, bool]:
+    """Safety Reflex Arbiter:
+    Ensures that even if the high-level neural model makes a mistake or hesitates,
+    the snake NEVER takes an avoidable suicide move into its own body or wall.
+    """
+    choice_info = analysis.get(choice, {})
+
+    # 1. If chosen move is safe and not a deadly trap, accept it directly
+    if choice_info.get("safe", False) and not choice_info.get("is_trap", False):
+        return choice, False
+
+    # 2. If chosen move was fatal or a trap, find safe candidates
+    safe_candidates = [
+        d for d, info in analysis.items()
+        if info.get("safe", False) and not info.get("is_trap", False)
+    ]
+
+    # If no 100% clean safe candidate exists, fallback to move with largest space
+    if not safe_candidates:
+        valid_candidates = [d for d in analysis.keys() if analysis[d].get("reason") != "Physically Forbidden (Reverse)"]
+        if not valid_candidates:
+            return choice, False
+        best_fallback = max(
+            valid_candidates,
+            key=lambda d: (
+                analysis[d].get("space", 0),
+                probs.get(d, 0)
+            )
+        )
+        return best_fallback, True
+
+    # 3. Among safe candidates, pick the one with best long-term survival:
+    # Priority: (can_reach_tail > free space > model probability)
+    best_safe = max(
+        safe_candidates,
+        key=lambda d: (
+            1 if analysis[d].get("can_reach_tail", False) else 0,
+            analysis[d].get("space", 0),
+            probs.get(d, 0)
+        )
+    )
+    return best_safe, True
 
 class PredictRequest(BaseModel):
     head: List[int]
@@ -208,16 +270,19 @@ def predict_move(req: PredictRequest):
     t1 = time.perf_counter()
 
     ans = res["answers"]["direction"]
-    choice = ans["choice"]
+    raw_choice = ans["choice"]
     probs = ans["probabilities"]
     confidence = ans.get("confidence", 0.0)
     inference_ms = round((t1 - t0) * 1000, 1)
 
-    # Fallback safety check: if chosen move is fatal and there's a safe move, alert
-    is_safe = analysis.get(choice, {}).get("safe", False)
+    # Apply Safety Reflex Arbiter
+    final_choice, overridden = select_safe_action(raw_choice, analysis, probs)
+    is_safe = analysis.get(final_choice, {}).get("safe", False)
 
     return {
-        "choice": choice,
+        "choice": final_choice,
+        "raw_model_choice": raw_choice,
+        "overridden": overridden,
         "probabilities": probs,
         "confidence": confidence,
         "inference_ms": inference_ms,
@@ -249,14 +314,19 @@ async def websocket_play(websocket: WebSocket):
             t1 = time.perf_counter()
 
             ans = res["answers"]["direction"]
-            choice = ans["choice"]
+            raw_choice = ans["choice"]
             probs = ans["probabilities"]
             confidence = ans.get("confidence", 0.0)
             inference_ms = round((t1 - t0) * 1000, 1)
 
+            # Apply Safety Reflex Arbiter
+            final_choice, overridden = select_safe_action(raw_choice, analysis, probs)
+
             resp = {
                 "step_id": payload.get("step_id", 0),
-                "choice": choice,
+                "choice": final_choice,
+                "raw_model_choice": raw_choice,
+                "overridden": overridden,
                 "probabilities": probs,
                 "confidence": confidence,
                 "inference_ms": inference_ms,
